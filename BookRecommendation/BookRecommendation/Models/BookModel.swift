@@ -14,16 +14,10 @@ struct Book: Codable, Identifiable, Equatable {
     let author: String
     let year: Int?
     let publisher: String?
-    let imageS: String?
-    let imageM: String?
-    let imageL: String?
     var score: Double? = nil
     
     enum CodingKeys: String, CodingKey {
         case isbn, title, author, year, publisher
-        case imageS = "image_s"
-        case imageM = "image_m"
-        case imageL = "image_l"
     }
     
     var coverURL: URL? {

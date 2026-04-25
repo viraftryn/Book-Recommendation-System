@@ -10,7 +10,9 @@ import SwiftUI
 struct LoginView: View {
     @EnvironmentObject var session: UserSessionModel
     @State private var userIdInput = ""
+    @State private var newUserId = ""
     @State private var showError = false
+    @State private var showNewUserId = false
     
     var body: some View {
         VStack(spacing: 32) {
@@ -38,7 +40,7 @@ struct LoginView: View {
                         .font(.headline)
                     
                     HStack {
-                        TextField("Enter your User ID",
+                        TextField("Enter your numeric User ID",
                                   text: $userIdInput)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numberPad)
@@ -69,15 +71,51 @@ struct LoginView: View {
                 }
                 
                 // New user
-                Button {
-                    session.login(mode: .newUser)
-                } label: {
-                    Label("Continue as New User",
-                          systemImage: "person.badge.plus")
-                    .frame(maxWidth: .infinity)
+                if showNewUserId {
+                    VStack(spacing: 12) {
+                        Text("Your new User ID")
+                            .font(.headline)
+                        
+                        Text(newUserId)
+                            .font(.system(.title2, design: .monospaced))
+                            .bold()
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 10)
+                            .background(Color.blue.opacity(0.08))
+                            .cornerRadius(10)
+                        
+                        Text("Save this ID - you can use it to log back in")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 8)
+                        
+                        Button("Continue") {
+                            session.login(mode: .existingUser(newUserId))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 4)
+                    .background(Color.blue.opacity(0.04))
+                    .cornerRadius(12)
+                } else {
+                    Button {
+                        // Generate the ID
+                        let id = String(Int.random(in: 100_000...999_999))
+                        newUserId = id
+                        
+                        showNewUserId = true
+                    } label: {
+                        Label("Create New Account", systemImage: "person.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
             }
             .padding(.horizontal, 24)
             

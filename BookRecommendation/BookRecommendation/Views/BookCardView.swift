@@ -16,75 +16,75 @@ struct BookCardView: View {
     @State private var showRatingSheet = false
     
     var body: some View {
-        HStack(spacing: 12) {
-            // Book cover
-            AsyncImage(url: book.coverURL) { phase in
-                switch phase {
-                case .success(let img):
-                    img.resizable()
-                       .aspectRatio(contentMode: .fill)
-                       .frame(width: 60, height: 85)
-                       .cornerRadius(6)
-                       .clipped()
-                case .failure, .empty:
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.blue.opacity(0.1))
-                        .frame(width: 60, height: 85)
-                        .overlay(
-                            Text(String(book.title.prefix(1)))
-                                .font(.title)
-                                .foregroundColor(.blue)
-                        )
-                @unknown default:
-                    EmptyView()
-                }
-            }
-            .frame(width: 60, height: 85)
-            
-            // Book info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(book.title)
-                    .font(.headline)
-                    .lineLimit(2)
-                
-                Text(book.author)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                
-                HStack {
-                    Text(book.scoreLabel)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(8)
-                    
-                    Spacer()
-                    
-                    // Show user's rating if rated
-                    if let rating = userRating {
-                        Label(String(format: "%.0f/10", rating),
-                              systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundColor(.green)
+        
+        Button {
+            showRatingSheet = true
+        } label: {
+            HStack(spacing: 12) {
+                AsyncImage(url: book.coverURL, transaction: Transaction(animation: .easeIn)) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable()
+                           .aspectRatio(contentMode: .fill)
+                           .frame(width: 60, height: 85)
+                           .cornerRadius(6)
+                           .clipped()
+                    case .failure, .empty:
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.blue.opacity(0.1))
+                            .frame(width: 60, height: 85)
+                            .overlay(
+                                Text(String(book.title.prefix(1)))
+                                    .font(.title)
+                                    .foregroundColor(.blue)
+                            )
+                    @unknown default:
+                        EmptyView()
                     }
                 }
-            }
-            
-            // Rate button
-            Button {
-                showRatingSheet = true
-            } label: {
+                .frame(width: 60, height: 85)
+                
+                // Book info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(book.title)
+                        .font(.headline)
+                        .lineLimit(2)
+                    
+                    Text(book.author)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    
+                    HStack {
+                        Text(book.scoreLabel)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+                        
+                        Spacer()
+                        
+                        // Show user's rating if rated
+                        if let rating = userRating {
+                            Label(String(format: "%.0f/10", rating),
+                                  systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
+                    }
+                }
+                
                 Image(systemName: isRated
                       ? "star.fill"
                       : "star")
                     .foregroundColor(isRated ? .yellow : .gray)
                     .font(.title2)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .buttonStyle(.plain)
         .sheet(isPresented: $showRatingSheet) {
             RatingSheet(book: book, onRate: { rating in
                 onRate(rating)

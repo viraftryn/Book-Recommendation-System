@@ -21,16 +21,16 @@ class UserSessionModel: ObservableObject {
     // Ratings that this user has given during session
     @Published var sessionRatings: [String: Float] = [:]
     
-    private let ratingsKey = "userRatings"
-    private let userIdKey = "userId"
+    private let activeUserIdKey = "activeUserId"
     
     init() {
         // Restore previous session if exists
-        if let saved = UserDefaults.standard.string(forKey: userIdKey) {
+        if let saved = UserDefaults.standard.string(forKey: activeUserIdKey) {
             userId = saved
             isLoggedIn = true
+            isNewUser = false
+            loadRatings(for: saved)
         }
-        loadRatings()
     }
     
     func login(mode: LoginMode) {
@@ -39,26 +39,29 @@ class UserSessionModel: ObservableObject {
             userId = id
             isNewUser = false
         case .newUser:
-            // Generate unique ID for new user
-            userId = "user_\(UUID().uuidString.prefix(8))"
+            // Generate unique ID for new user, 6 digit numeric ID same format as the SVD dataset
+            let id = String(Int.random(in: 100_000...999_999))
+            userId = id
             isNewUser = true
         }
         isLoggedIn = true
-        UserDefaults.standard.set(userId, forKey: userIdKey)
+        UserDefaults.standard.set(userId, forKey: activeUserIdKey)
+        loadRatings(for: userId)
     }
     
     func logout() {
+        saveRatings(for: userId)
+        UserDefaults.standard.removeObject(forKey: activeUserIdKey)
         isLoggedIn = false
-        userId = ""
         isNewUser = false
         sessionRatings = [:]
-        UserDefaults.standard.removeObject(forKey: userIdKey)
-        UserDefaults.standard.removeObject(forKey: ratingsKey)
+        userId = ""
     }
     
     func rateBook(isbn: String, rating: Float) {
         sessionRatings[isbn] = rating
-        saveRatings()
+        saveRatings(for: userId)
+        print("🔍 Rated ISBN: '\(isbn)'")
     }
     
     func hasRated(isbn: String) -> Bool {
@@ -74,15 +77,25 @@ class UserSessionModel: ObservableObject {
         sessionRatings.mapValues { max($0, 5.0)}
     }
     
-    private func saveRatings() {
+    private func ratingsKey(for id: String) -> String {
+        "userRatings_\(id)"
+    }
+    
+    private func saveRatings(for id: String) {
+        guard !id.isEmpty else { return }
         if let data = try? JSONEncoder().encode(sessionRatings) {
-            UserDefaults.standard.set(data, forKey: ratingsKey)
+            UserDefaults.standard.set(data, forKey: ratingsKey(for: id))
         }
     }
     
-    private func loadRatings() {
-        guard let data = UserDefaults.standard.data(forKey: ratingsKey),
-              let saved = try? JSONDecoder().decode([String: Float].self, from: data) else { return }
+    private func loadRatings(for id: String) {
+        guard !id.isEmpty,
+              let data  = UserDefaults.standard.data(forKey: ratingsKey(for: id)),
+              let saved = try? JSONDecoder().decode([String: Float].self, from: data)
+        else {
+            sessionRatings = [:]
+            return
+        }
         sessionRatings = saved
     }
 }
