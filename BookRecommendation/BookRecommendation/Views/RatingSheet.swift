@@ -25,11 +25,36 @@ struct RatingSheet: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            // Book title
-            Text(book.title)
-                .font(.headline)
-                .multilineTextAlignment(.center)
-                .padding(.top)
+            VStack(spacing: 10) {
+                // Book Cover
+                AsyncImage(url: book.coverURL, transaction: Transaction(animation: .easeIn)) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable()
+                           .aspectRatio(contentMode: .fill)
+                           .frame(width: 40, height: 65)
+                           .cornerRadius(6)
+                           .clipped()
+                    case .failure, .empty:
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.blue.opacity(0.1))
+                            .frame(width: 40, height: 65)
+                            .overlay(
+                                Text(String(book.title.prefix(1)))
+                                    .font(.title)
+                                    .foregroundColor(.blue)
+                            )
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+                .frame(width: 40, height: 65)
+                
+                // Book title
+                Text(book.title)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+            }
             
             // Quick rate buttons
             HStack(spacing: 12) {
