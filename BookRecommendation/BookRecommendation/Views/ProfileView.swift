@@ -134,8 +134,6 @@ struct ProfileView: View {
     }
 }
  
-// MARK: – Sub-views
- 
 struct RatedBookEntry: Identifiable {
     let book:   Book
     let rating: Float

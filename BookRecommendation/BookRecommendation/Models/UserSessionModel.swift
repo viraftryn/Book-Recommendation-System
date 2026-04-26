@@ -61,7 +61,6 @@ class UserSessionModel: ObservableObject {
     func rateBook(isbn: String, rating: Float) {
         sessionRatings[isbn] = rating
         saveRatings(for: userId)
-        print("🔍 Rated ISBN: '\(isbn)'")
     }
     
     func hasRated(isbn: String) -> Bool {

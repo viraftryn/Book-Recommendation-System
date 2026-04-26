@@ -115,17 +115,6 @@ class SVDEngine {
             totalNorm += sqrt(sumSq)
         }
         avgUserNorm = n > 0 ? totalNorm / Float(n) : 1.0
-
-        // ── Diagnostics ────────────────────────────────────────────────────────
-        print("📊 SVDEngine loaded:")
-        print("   item_factors vectors: \(itemsWithFactorData)")
-        print("   item_map entries:     \(itemMap.count)")
-        print("   avg user vector norm: \(String(format: "%.4f", avgUserNorm))")
-        if itemsWithFactorData == itemMap.count {
-            print("✅ item_factors covers all \(itemsWithFactorData) items")
-        } else {
-            print("⚠️  Only \(itemsWithFactorData) of \(itemMap.count) items have factor data")
-        }
     }
 
     // MARK: – Public
@@ -231,13 +220,7 @@ class SVDEngine {
             validCount  += 1
         }
 
-        if !missed.isEmpty {
-            print("⚠️  Fold-in: \(missed.count) ISBNs not in item_map: \(missed)")
-        }
-        print("🔍 Fold-in: \(validCount)/\(ratedBooks.count) rated ISBNs found in item_map")
-
         guard validCount > 0, totalWeight > 0 else {
-            print("   ⚠️ No valid rated items for fold-in")
             return []
         }
 
@@ -255,7 +238,6 @@ class SVDEngine {
         if currentNorm > 1e-6 {
             let scale = avgUserNorm / currentNorm
             vDSP_vsmul(userVec, 1, [scale], &userVec, 1, vDSP_Length(nFactors))
-            print("   Fold-in vector norm: \(String(format: "%.4f", currentNorm)) → scaled to \(String(format: "%.4f", avgUserNorm))")
         }
 
         let avgItemBias = approxBias / Float(validCount)
@@ -286,7 +268,6 @@ class SVDEngine {
         // Sort by personal dot product, same reasoning as Case 1
         items.sort { $0.dot > $1.dot }
 
-        print("   Fold-in pool: \(items.count) items")
         return Array(items.prefix(n)).map { (isbn: $0.isbn, score: $0.display) }
     }
 

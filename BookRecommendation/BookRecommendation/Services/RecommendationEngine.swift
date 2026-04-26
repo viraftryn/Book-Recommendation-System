@@ -38,8 +38,6 @@ class RecommendationEngine: ObservableObject {
     
     private var seenISBNs: Set<String> = []
     
-    //    private var popularRotationOffset = 0 // for tracking where we are in the popular list for rotation on pull-to-refresh
-    
     init() {
         // Load SVD engine
         guard let engine = SVDEngine.load() else {
@@ -59,11 +57,6 @@ class RecommendationEngine: ObservableObject {
         
         let modelISBNs = Set(engine.itemMap.keys)
         let metadataISBNs = Set(meta.keys)
-        let overlap = modelISBNs.intersection(metadataISBNs)
-        print("📚 ISBN overlap: \(overlap.count) / \(modelISBNs.count) model items found in metadata (\(metadataISBNs.count) metadata total)")
-        if overlap.isEmpty {
-            print("⚠️  Zero overlap — check that books_metadata.json ISBNs match svd_model_export.json item_map keys")
-        }
     }
     
     // Called on logout
@@ -147,65 +140,52 @@ class RecommendationEngine: ObservableObject {
         let rated    = session.sessionRatings
         let excluded = Set(session.sessionRatings.keys)
         
-        // Clip rate 1-4
-        //        let modelRatings = session.modelRatings
-        
         // On pull-to-refresh, also exclude everything already seen so the
         // list genuinely changes rather than reshuffling the same books.
         let refreshExcluded = isUserInitiated
         ? excluded.union(seenISBNs)
         : excluded
         
-        // Case 1: Known user from dataset
+        // Case 1: Existing user from dataset
         if !session.isNewUser && svd.userExists(session.userId) {
-            print("Known user: \(session.userId)")
             var recs = svd.recommend(
                 userId:       session.userId,
                 excludeISBNs: refreshExcluded,
                 n: svd.itemsWithFactorData
             )
-            print("   SVD returned \(recs.count) raw recs")
             
             if isUserInitiated {
                 recs.shuffle()
             }
             
             var books = enrich(Array(recs.prefix(20)))
-            print("   After enrich: \(books.count) books")
             
             if books.count < 10 {
-                print("   ⚠️ SVD pool small (\(books.count)) — blending popular books")
                 books = blendWithPopular(svdBooks: books,
                                          excluded: refreshExcluded,
                                          target: 20)
             }
-            print("   Final: \(books.count) books")
             return (books, .personalized)
         }
         
         // Case 2: New user with at least 1 rating
         // Use fold-in approximation that improves with each rating
         if !rated.isEmpty {
-            print("🌱 Case 2 — cold start with \(rated.count) ratings")
-            
             var recs = svd.approximateAndRecommend(
                 ratedBooks:   session.modelRatings,
                 excludeISBNs: refreshExcluded,
                 n: svd.itemsWithFactorData
             )
-            print("   Fold-in pool: \(recs.count) items")
             
             if isUserInitiated { recs.shuffle() }
             
             var books = enrich(Array(recs.prefix(20)))
             
             if books.count < 10 {
-                print("   ⚠️ Fold-in pool small (\(books.count)) — blending popular books")
                 books = blendWithPopular(svdBooks: books,
                                          excluded: refreshExcluded,
                                          target: 20)
             }
-            print("   Final: \(books.count) books")
             return (books, .coldStart(rated.count))
         }
         
