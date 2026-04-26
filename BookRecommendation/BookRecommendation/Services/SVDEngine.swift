@@ -126,15 +126,15 @@ class SVDEngine {
 
     // MARK: – Case 1: Recommend for a known (trained) user
     //
-    // Sorting key: dot(userVec, itemVec)
-    //   — the purely personal preference component.
-    //   itemBias is identical for every user, so using it as a sort key
-    //   produces the same ranking for everyone. By sorting on dot product
-    //   only we ensure each user's tastes drive the order.
-    //
-    // Stored score: full SVD formula (for UI display).
+    // Blend weight α grows with session rating count:
+    //   α = min(0.8, sessionRatingCount × 0.15)
+    //   0 ratings  → α = 0.00 → 100% pre-trained  (personalized from history)
+    //   1 rating   → α = 0.15 → small taste shift
+    //   3 ratings  → α = 0.45 → moderate shift
+    //   5+ ratings → α = 0.75 → strong shift toward new session behavior
     func recommend(
         userId:       String,
+        sessionRatings: [String: Float],
         excludeISBNs: Set<String> = [],
         n:            Int = 20
     ) -> [(isbn: String, score: Float)] {
@@ -145,6 +145,36 @@ class SVDEngine {
 
         let uVec  = Array(userFactors[uStart..<uStart + nFactors])
         let uBias = userBiases[uid]
+        
+        // Build effective vector that blend base with fold-in if session ratings exist
+        var effectiveVec = uVec
+        let newRatings = sessionRatings.filter { resolveItemIndex($0.key) != nil }
+        
+        if !newRatings.isEmpty {
+            // Compute fold-in vector from session ratings
+            if let foldInVec = buildFoldInVector(from: newRatings) {
+                // α grows per new rating, capped at 0.8 so pre-trained history
+                // never fully disappears
+                let alpha = min(0.8, Float(newRatings.count) * 0.15)
+                
+                // effectiveVec = (1 - α) × base + α × foldIn
+                var blended = [Float](repeating: 0, count: nFactors)
+                let oneMinusAlpha = 1.0 - alpha
+                
+                // (1 - α) × baseVec
+                var scaledBase = [Float](repeating: 0, count: nFactors)
+                vDSP_vsmul(uVec, 1, [oneMinusAlpha], &scaledBase, 1, vDSP_Length(nFactors))
+                
+                // α × foldInVec
+                var scaledFold = [Float](repeating: 0, count: nFactors)
+                vDSP_vsmul(foldInVec, 1, [alpha], &scaledFold, 1, vDSP_Length(nFactors))
+                
+                vDSP_vadd(scaledBase, 1, scaledFold, 1, &blended, 1, vDSP_Length(nFactors))
+                effectiveVec = blended
+                
+                print("🔀 Blending: \(newRatings.count) session ratings, α=\(String(format:"%.2f", alpha))")
+            }
+        }
 
         // Temporary tuple: (isbn, displayScore, personalDot)
         var items = [(isbn: String, display: Float, dot: Float)]()
@@ -159,7 +189,7 @@ class SVDEngine {
             let iVec   = Array(itemFactors[iStart..<iStart + nFactors])
 
             var dot: Float = 0
-            vDSP_dotpr(uVec, 1, iVec, 1, &dot, vDSP_Length(nFactors))
+            vDSP_dotpr(effectiveVec, 1, iVec, 1, &dot, vDSP_Length(nFactors))
 
             let display = min(max(
                 globalMean + uBias + itemBiases[iid] + dot,
@@ -176,127 +206,125 @@ class SVDEngine {
         return Array(items.prefix(n)).map { (isbn: $0.isbn, score: $0.display) }
     }
 
-    // MARK: – Case 2: Fold-in for new / guest user
+    // MARK: – Case 2: Fold-in for new user
     //
     // Key fix: after building the weighted-average item vector, we scale
     // it to match avgUserNorm. Without this, the vector has magnitude ~0.02
     // while trained vectors are ~1.8, making dot products ~100x smaller than
     // item biases — every user gets the same "most popular" ranking.
     func approximateAndRecommend(
-        ratedBooks:   [String: Float],
-        excludeISBNs: Set<String> = [],
-        n:            Int = 20
-    ) -> [(isbn: String, score: Float)] {
-
-        guard !ratedBooks.isEmpty else { return [] }
-
-        // Step 1: weighted sum of rated item vectors
-        var weightedSum = [Float](repeating: 0, count: nFactors)
-        var totalWeight: Float = 0
-        var approxBias:  Float = 0
-        var validCount   = 0
-        var missed       = [String]()
-
-        for (isbn, rating) in ratedBooks {
-            guard let iid = resolveItemIndex(isbn),
-                  iid < itemsWithFactorData,
-                  iid < itemBiases.count
-            else { missed.append(isbn); continue }
-
-            let iStart = iid * nFactors
-            let iVec   = Array(itemFactors[iStart..<iStart + nFactors])
-
-            // Weight = deviation from globalMean.
-            // Positive weight → user likes this type of book.
-            // Negative weight → user dislikes this type of book.
-            let weight = rating - globalMean
-
-            var scaled = [Float](repeating: 0, count: nFactors)
-            vDSP_vsmul(iVec, 1, [weight], &scaled, 1, vDSP_Length(nFactors))
-            vDSP_vadd(weightedSum, 1, scaled, 1, &weightedSum, 1, vDSP_Length(nFactors))
-
-            totalWeight += abs(weight)
-            approxBias  += itemBiases[iid]
-            validCount  += 1
+            ratedBooks:   [String: Float],
+            excludeISBNs: Set<String> = [],
+            n:            Int = 20
+        ) -> [(isbn: String, score: Float)] {
+     
+            guard !ratedBooks.isEmpty else { return [] }
+            guard let userVec = buildFoldInVector(from: ratedBooks) else {
+                print("⚠️ Fold-in: no valid rated items found in item_map")
+                return []
+            }
+     
+            let validCount  = ratedBooks.filter { resolveItemIndex($0.key) != nil }.count
+            let avgItemBias = ratedBooks.compactMap { resolveItemIndex($0.key).map { itemBiases[$0] } }
+                                        .reduce(0, +) / Float(max(validCount, 1))
+     
+            print("🔍 Fold-in: \(validCount)/\(ratedBooks.count) rated ISBNs found in item_map")
+     
+            var items = [(isbn: String, display: Float, dot: Float)]()
+            items.reserveCapacity(itemsWithFactorData)
+     
+            for iid in 0..<itemsWithFactorData {
+                guard let isbn = itemReverseMap[iid] else { continue }
+                if excludeISBNs.contains(isbn) { continue }
+                if ratedBooks[isbn] != nil      { continue }
+                guard iid < itemBiases.count    else { continue }
+     
+                let iStart = iid * nFactors
+                let iVec   = Array(itemFactors[iStart..<iStart + nFactors])
+     
+                var dot: Float = 0
+                vDSP_dotpr(userVec, 1, iVec, 1, &dot, vDSP_Length(nFactors))
+     
+                let display = min(max(
+                    globalMean + avgItemBias + itemBiases[iid] + dot,
+                    ratingMin), ratingMax)
+     
+                items.append((isbn: isbn, display: display, dot: dot))
+            }
+     
+            items.sort { $0.dot > $1.dot }
+            print("   Fold-in pool: \(items.count) items")
+            return Array(items.prefix(n)).map { (isbn: $0.isbn, score: $0.display) }
         }
-
-        guard validCount > 0, totalWeight > 0 else {
-            return []
+     
+        // MARK: – Shared fold-in vector builder
+        // Builds a user vector from a set of rated books, scaled to avgUserNorm.
+        // Used by both Case 1 (as the adjustment component) and Case 2 (standalone).
+        private func buildFoldInVector(from ratedBooks: [String: Float]) -> [Float]? {
+            var weightedSum = [Float](repeating: 0, count: nFactors)
+            var totalWeight: Float = 0
+            var validCount  = 0
+     
+            for (isbn, rating) in ratedBooks {
+                guard let iid = resolveItemIndex(isbn),
+                      iid < itemsWithFactorData,
+                      iid < itemBiases.count
+                else { continue }
+     
+                let iStart = iid * nFactors
+                let iVec   = Array(itemFactors[iStart..<iStart + nFactors])
+     
+                // Weight encodes preference direction:
+                // positive = user likes this type; negative = user dislikes
+                let weight = rating - globalMean
+                var scaled = [Float](repeating: 0, count: nFactors)
+                vDSP_vsmul(iVec, 1, [weight], &scaled, 1, vDSP_Length(nFactors))
+                vDSP_vadd(weightedSum, 1, scaled, 1, &weightedSum, 1, vDSP_Length(nFactors))
+     
+                totalWeight += abs(weight)
+                validCount  += 1
+            }
+     
+            guard validCount > 0, totalWeight > 0 else { return nil }
+     
+            // Normalise direction
+            var vec = [Float](repeating: 0, count: nFactors)
+            vDSP_vsmul(weightedSum, 1, [1.0 / totalWeight], &vec, 1, vDSP_Length(nFactors))
+     
+            // Scale magnitude to avgUserNorm so dot products are comparable to
+            // those of trained users — without this, dot ≈ 0.02 and item biases
+            // dominate the ranking (same top books for every user)
+            var sumSq: Float = 0
+            vDSP_svesq(vec, 1, &sumSq, vDSP_Length(nFactors))
+            let norm = sqrt(sumSq)
+            if norm > 1e-6 {
+                vDSP_vsmul(vec, 1, [avgUserNorm / norm], &vec, 1, vDSP_Length(nFactors))
+            }
+     
+            return vec
         }
-
-        // Step 2: normalise by totalWeight → unit-direction vector
-        var userVec = [Float](repeating: 0, count: nFactors)
-        vDSP_vsmul(weightedSum, 1, [1.0 / totalWeight], &userVec, 1, vDSP_Length(nFactors))
-
-        // Step 3: RE-SCALE to avgUserNorm
-        // Without this, the vector's L2 norm is ~0.02 vs ~1.8 for trained users.
-        // That makes dot products 90x smaller than item biases, so ranking
-        // degenerates to "sort by item popularity" for every user.
-        var sumSq: Float = 0
-        vDSP_svesq(userVec, 1, &sumSq, vDSP_Length(nFactors))
-        let currentNorm = sqrt(sumSq)
-        if currentNorm > 1e-6 {
-            let scale = avgUserNorm / currentNorm
-            vDSP_vsmul(userVec, 1, [scale], &userVec, 1, vDSP_Length(nFactors))
+     
+        // MARK: – ISBN normalisation
+        private static func stripLeadingZeros(_ s: String) -> String {
+            String(s.drop(while: { $0 == "0" }))
         }
-
-        let avgItemBias = approxBias / Float(validCount)
-
-        // Step 4: score all unrated items
-        var items = [(isbn: String, display: Float, dot: Float)]()
-        items.reserveCapacity(itemsWithFactorData)
-
-        for iid in 0..<itemsWithFactorData {
-            guard let isbn = itemReverseMap[iid] else { continue }
-            if excludeISBNs.contains(isbn) { continue }
-            if ratedBooks[isbn] != nil      { continue }
-            guard iid < itemBiases.count    else { continue }
-
-            let iStart = iid * nFactors
-            let iVec   = Array(itemFactors[iStart..<iStart + nFactors])
-
-            var dot: Float = 0
-            vDSP_dotpr(userVec, 1, iVec, 1, &dot, vDSP_Length(nFactors))
-
-            let display = min(max(
-                globalMean + avgItemBias + itemBiases[iid] + dot,
-                ratingMin), ratingMax)
-
-            items.append((isbn: isbn, display: display, dot: dot))
+        private static func isbn13to10(_ s: String) -> String? {
+            let d = s.filter(\.isNumber)
+            guard d.count == 13, d.hasPrefix("978") else { return nil }
+            let nine = String(d.dropFirst(3).prefix(9))
+            guard nine.count == 9 else { return nil }
+            var sum = 0
+            for (i, c) in nine.enumerated() { sum += (c.wholeNumberValue ?? 0) * (10 - i) }
+            let check = (11 - sum % 11) % 11
+            return nine + (check == 10 ? "X" : String(check))
         }
-
-        // Sort by personal dot product, same reasoning as Case 1
-        items.sort { $0.dot > $1.dot }
-
-        return Array(items.prefix(n)).map { (isbn: $0.isbn, score: $0.display) }
+        private static func isbn10to13(_ s: String) -> String {
+            let d    = s.filter { $0.isNumber || $0 == "X" || $0 == "x" }
+            let nine = String(d.prefix(9))
+            let body = "978" + nine
+            let sum  = body.enumerated().reduce(0) {
+                $0 + ($1.element.wholeNumberValue ?? 0) * ($1.offset % 2 == 0 ? 1 : 3)
+            }
+            return body + String((10 - sum % 10) % 10)
+        }
     }
-
-    // MARK: – ISBN normalisation helpers
-    private static func stripLeadingZeros(_ isbn: String) -> String {
-        String(isbn.drop(while: { $0 == "0" }))
-    }
-
-    private static func isbn13to10(_ isbn13: String) -> String? {
-        let digits = isbn13.filter(\.isNumber)
-        guard digits.count == 13, digits.hasPrefix("978") else { return nil }
-        let nine = String(digits.dropFirst(3).prefix(9))
-        guard nine.count == 9 else { return nil }
-        var sum = 0
-        for (i, ch) in nine.enumerated() {
-            guard let d = ch.wholeNumberValue else { return nil }
-            sum += d * (10 - i)
-        }
-        let check = (11 - (sum % 11)) % 11
-        return nine + (check == 10 ? "X" : String(check))
-    }
-
-    private static func isbn10to13(_ isbn10: String) -> String {
-        let digits = isbn10.filter { $0.isNumber || $0 == "X" || $0 == "x" }
-        let nine   = String(digits.prefix(9))
-        let body   = "978" + nine
-        let sum    = body.enumerated().reduce(0) { acc, pair in
-            acc + (pair.element.wholeNumberValue ?? 0) * (pair.offset % 2 == 0 ? 1 : 3)
-        }
-        return body + String((10 - (sum % 10)) % 10)
-    }
-}

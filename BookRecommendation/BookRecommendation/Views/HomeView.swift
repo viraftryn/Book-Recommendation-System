@@ -12,6 +12,7 @@ struct HomeView: View {
     @EnvironmentObject var engine:  RecommendationEngine
 
     @State private var searchText = ""
+    @State private var isSearchActive = false
 
     var searchResults: [Book] {
         guard !searchText.isEmpty else { return [] }
@@ -30,7 +31,7 @@ struct HomeView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                if searchText.isEmpty {
+                if !isSearchActive {
                     ModeBannerView(mode: engine.mode,
                                    ratingCount: session.ratingCount)
                 }
@@ -39,14 +40,14 @@ struct HomeView: View {
                     Spacer()
                     ProgressView("Finding books...")
                     Spacer()
-                } else if !searchText.isEmpty {
+                } else if isSearchActive {
                     searchList
                 } else {
                     recommendationList
                 }
             }
             .navigationTitle("For You")
-            .searchable(text: $searchText, prompt: "Search books to rate...")
+            .searchable(text: $searchText, isPresented: $isSearchActive, prompt: "Search books to rate...")
         }
         .onAppear {
             engine.refresh(session: session)
@@ -73,6 +74,8 @@ struct HomeView: View {
                             userRating: session.sessionRatings[book.isbn]
                         ) { rating in
                             session.rateBook(isbn: book.isbn, rating: rating)
+                            searchText = ""
+                            isSearchActive = false
                             engine.refresh(session: session)
                         }
                         Divider()

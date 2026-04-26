@@ -54,9 +54,6 @@ class RecommendationEngine: ObservableObject {
         
         self.booksMeta = meta
         self.popularBooks = popular
-        
-        let modelISBNs = Set(engine.itemMap.keys)
-        let metadataISBNs = Set(meta.keys)
     }
     
     // Called on logout
@@ -102,6 +99,7 @@ class RecommendationEngine: ObservableObject {
             // Pull the next batch from a deeper SVD query
             let recs = svd.recommend(
                 userId:       session.userId,
+                sessionRatings: session.modelRatings,
                 excludeISBNs: excluded,
                 n:10
             )
@@ -150,6 +148,7 @@ class RecommendationEngine: ObservableObject {
         if !session.isNewUser && svd.userExists(session.userId) {
             var recs = svd.recommend(
                 userId:       session.userId,
+                sessionRatings: session.modelRatings,
                 excludeISBNs: refreshExcluded,
                 n: svd.itemsWithFactorData
             )
